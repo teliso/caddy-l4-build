@@ -1,6 +1,3 @@
-FROM scratch
+FROM caddy:2.11.4-alpine
 
 COPY caddy /usr/bin/caddy
-
-ENTRYPOINT ["/usr/bin/caddy"]
-CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
