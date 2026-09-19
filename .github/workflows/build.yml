@@ -1,0 +1,44 @@
+name: Build Caddy L4
+
+on:
+  workflow_dispatch:
+
+env:
+  CADDY_VERSION: v2.11.4
+  CADDY_L4_VERSION: v0.1.2
+  XCADDY_VERSION: v0.4.5
+  GO_VERSION: '1.26.3'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install xcaddy
+        run: |
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}
+
+      - name: Build Caddy with Layer4
+        run: |
+          xcaddy build ${CADDY_VERSION} \
+            --with github.com/mholt/caddy-l4@${CADDY_L4_VERSION} \
+            --output caddy
+
+      - name: Verify build
+        run: |
+          ./caddy version
+          ./caddy list-modules --versions | grep layer4
+          sha256sum caddy | tee caddy.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caddy-l4-linux-amd64
+          path: |
+            caddy
+            caddy.sha256
