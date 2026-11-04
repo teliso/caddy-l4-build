@@ -53,6 +53,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: stable
+          cache: false
 
       - name: Install xcaddy
         if: steps.ver.outputs.changed == 'true'
@@ -99,14 +100,6 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.caddy }}-l4-${{ steps.ver.outputs.l4 }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Delete old package versions
-        if: steps.ver.outputs.changed == 'true'
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: caddy-l4
-          package-type: container
-          min-versions-to-keep: 3
-
       - name: Record built versions
         if: steps.ver.outputs.changed == 'true'
         env:
@@ -119,5 +112,19 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add versions.env
             git commit -m "Bump Caddy to ${CADDY_VERSION}, caddy-l4 to ${CADDY_L4_VERSION}"
-            git push
+            for delay in 2 4 8 16 0; do
+              git push && exit 0
+              [ "$delay" -gt 0 ] || break
+              echo "push failed, retrying in ${delay}s"
+              sleep "$delay"
+            done
+            exit 1
           fi
+
+      - name: Delete old package versions
+        if: steps.ver.outputs.changed == 'true'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: caddy-l4
+          package-type: container
+          min-versions-to-keep: 3
