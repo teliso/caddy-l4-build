@@ -1,3 +1,4 @@
+# Checks Caddy and caddy-l4 every 3 days and publishes the image when either has a new version. See README.md.
 name: Build Caddy L4 Image
 
 on:
