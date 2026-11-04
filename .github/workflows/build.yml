@@ -1,50 +1,82 @@
 name: Build Caddy L4 Image
 
 on:
+  schedule:
+    - cron: '17 2 */2 * *'
   workflow_dispatch:
 
 env:
-  CADDY_VERSION: v2.11.7
-  CADDY_L4_VERSION: v0.1.2
-  XCADDY_VERSION: v0.4.7
-  GO_VERSION: '1.27.1'
-
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/caddy-l4
+
+concurrency:
+  group: build
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Resolve versions
+        id: ver
+        run: |
+          set -euo pipefail
+          source versions.env
+          latest() {
+            curl -fsS --retry 3 "https://proxy.golang.org/$1/@latest" | jq -r .Version
+          }
+          caddy=$(latest github.com/caddyserver/caddy/v2)
+          l4=$(latest github.com/mholt/caddy-l4)
+          for v in "$caddy" "$l4"; do
+            [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unexpected version: $v"; exit 1; }
+          done
+          if [ "$caddy" != "$CADDY_VERSION" ] || [ "$l4" != "$CADDY_L4_VERSION" ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            changed=true
+          else
+            changed=false
+          fi
+          echo "caddy=$caddy" >> "$GITHUB_OUTPUT"
+          echo "l4=$l4" >> "$GITHUB_OUTPUT"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "current: $CADDY_VERSION / $CADDY_L4_VERSION, latest: $caddy / $l4, build: $changed"
+
       - name: Setup Go
+        if: steps.ver.outputs.changed == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: stable
 
       - name: Install xcaddy
+        if: steps.ver.outputs.changed == 'true'
         run: |
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
       - name: Build Caddy with Layer4
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          CADDY_VERSION: ${{ steps.ver.outputs.caddy }}
+          CADDY_L4_VERSION: ${{ steps.ver.outputs.l4 }}
         run: |
           xcaddy build ${CADDY_VERSION} \
             --with github.com/mholt/caddy-l4@${CADDY_L4_VERSION} \
             --output caddy
 
       - name: Verify
+        if: steps.ver.outputs.changed == 'true'
         run: |
           ./caddy version
           ./caddy list-modules --versions | grep layer4
 
       - name: Login to GHCR
+        if: steps.ver.outputs.changed == 'true'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -52,13 +84,32 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Buildx
+        if: steps.ver.outputs.changed == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Build and push
+        if: steps.ver.outputs.changed == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
+          provenance: false
+          pull: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.CADDY_VERSION }}-l4-${{ env.CADDY_L4_VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.caddy }}-l4-${{ steps.ver.outputs.l4 }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Record built versions
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          CADDY_VERSION: ${{ steps.ver.outputs.caddy }}
+          CADDY_L4_VERSION: ${{ steps.ver.outputs.l4 }}
+        run: |
+          printf 'CADDY_VERSION=%s\nCADDY_L4_VERSION=%s\n' "$CADDY_VERSION" "$CADDY_L4_VERSION" > versions.env
+          if ! git diff --quiet versions.env; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add versions.env
+            git commit -m "Bump Caddy to ${CADDY_VERSION}, caddy-l4 to ${CADDY_L4_VERSION}"
+            git push
+          fi
