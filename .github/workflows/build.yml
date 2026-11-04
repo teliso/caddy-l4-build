@@ -99,6 +99,14 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.caddy }}-l4-${{ steps.ver.outputs.l4 }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
+      - name: Delete old package versions
+        if: steps.ver.outputs.changed == 'true'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: caddy-l4
+          package-type: container
+          min-versions-to-keep: 3
+
       - name: Record built versions
         if: steps.ver.outputs.changed == 'true'
         env:
